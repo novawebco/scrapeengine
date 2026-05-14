@@ -7,6 +7,8 @@
  */
 
 if (!defined('ABSPATH')) exit;
+if (!defined('ANS_SCHEMA_BACKFILL_VERSION')) define('ANS_SCHEMA_BACKFILL_VERSION', '20260514_final_schema');
+if (!defined('ANS_SCHEMA_BACKFILL_BATCH')) define('ANS_SCHEMA_BACKFILL_BATCH', 200);
 
 // ============================================================
 // WORD COUNT COLUMN IN POST LIST
@@ -72,6 +74,54 @@ add_action('pre_get_posts', function($query) {
         $query->set('orderby', 'meta_value_num');
     }
 });
+
+add_action('admin_init', 'ans_backfill_final_schema_meta_for_existing_posts');
+function ans_backfill_final_schema_meta_for_existing_posts() {
+    if (!current_user_can('manage_options')) return;
+
+    $target_lang = ans_sanitize_option_value('ans_target_lang', get_option('ans_target_lang', 'select'));
+    if ($target_lang === 'select') $target_lang = '';
+
+    $done_version = get_option('ans_schema_backfill_version', '');
+    if ($done_version === ANS_SCHEMA_BACKFILL_VERSION) return;
+
+    $post_ids = get_posts([
+        'post_type' => 'post',
+        'post_status' => 'publish',
+        'posts_per_page' => ANS_SCHEMA_BACKFILL_BATCH,
+        'fields' => 'ids',
+        'orderby' => 'ID',
+        'order' => 'ASC',
+        'meta_query' => [
+            'relation' => 'OR',
+            ['key' => '_ans_schema_version', 'compare' => 'NOT EXISTS'],
+            ['key' => '_ans_schema_version', 'value' => ANS_SCHEMA_BACKFILL_VERSION, 'compare' => '!='],
+        ],
+    ]);
+
+    if (empty($post_ids)) {
+        update_option('ans_schema_backfill_version', ANS_SCHEMA_BACKFILL_VERSION, false);
+        return;
+    }
+
+    foreach ($post_ids as $post_id) {
+        $stored_lang = get_post_meta($post_id, '_ans_schema_lang', true);
+        $post_target = get_post_meta($post_id, '_ans_target_lang', true);
+        $lang = $stored_lang ?: $post_target ?: $target_lang;
+
+        if ($lang !== '') {
+            $lang = ans_schema_language_code($lang);
+            update_post_meta($post_id, '_ans_schema_lang', $lang);
+            if ($post_target === '') update_post_meta($post_id, '_ans_target_lang', $lang);
+        }
+
+        $content = get_post_field('post_content', $post_id);
+        update_post_meta($post_id, '_ans_word_count', str_word_count(wp_strip_all_tags($content)));
+        update_post_meta($post_id, '_ans_schema_version', ANS_SCHEMA_BACKFILL_VERSION);
+    }
+
+    delete_option('ans_schema_backfill_version');
+}
 
 // ============================================================
 // SECURITY HELPER
