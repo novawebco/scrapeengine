@@ -3034,6 +3034,43 @@ function ans_schema_terms($post_id, $taxonomy) {
     return array_values(array_unique($names));
 }
 
+function ans_schema_term_breadcrumbs($post_id, $taxonomy = 'category') {
+    $terms = get_the_terms($post_id, $taxonomy);
+    if (empty($terms) || is_wp_error($terms)) return [];
+
+    $best = null;
+    $best_depth = -1;
+    foreach ($terms as $term) {
+        $ancestors = get_ancestors($term->term_id, $taxonomy, 'taxonomy');
+        $depth = is_array($ancestors) ? count($ancestors) : 0;
+        if ($depth > $best_depth) {
+            $best = $term;
+            $best_depth = $depth;
+        }
+    }
+    if (!$best) return [];
+
+    $term_ids = array_reverse(get_ancestors($best->term_id, $taxonomy, 'taxonomy'));
+    $term_ids[] = $best->term_id;
+
+    $items = [];
+    foreach ($term_ids as $term_id) {
+        $term = get_term($term_id, $taxonomy);
+        if (!$term || is_wp_error($term)) continue;
+
+        $name = ans_schema_clean_text($term->name, 80);
+        $link = get_term_link($term, $taxonomy);
+        if ($name === '' || is_wp_error($link)) continue;
+
+        $items[] = [
+            'name' => $name,
+            'item' => esc_url_raw($link),
+        ];
+    }
+
+    return $items;
+}
+
 function ans_build_blogposting_schema($post) {
     if (!$post || $post->post_type !== 'post' || $post->post_status !== 'publish') return [];
 
@@ -3053,6 +3090,7 @@ function ans_build_blogposting_schema($post) {
     $article_body = ans_schema_clean_text($post->post_content, 12000);
 
     $categories = ans_schema_terms($post_id, 'category');
+    $category_breadcrumbs = ans_schema_term_breadcrumbs($post_id, 'category');
     $tags = ans_schema_terms($post_id, 'post_tag');
     $topics = empty($tags) ? ans_get_content_topics($post->post_content) : [];
     $keywords = array_values(array_unique(array_filter(array_merge($tags, $topics))));
@@ -3133,7 +3171,7 @@ function ans_build_blogposting_schema($post) {
         $schema['@graph'][] = [
             '@type' => 'BreadcrumbList',
             '@id' => trailingslashit($url) . '#breadcrumb',
-            'itemListElement' => ans_schema_breadcrumb_items($url, $title, $categories, $lang),
+            'itemListElement' => ans_schema_breadcrumb_items($url, $title, $category_breadcrumbs ?: $categories, $lang),
         ];
     }
 
@@ -3167,11 +3205,28 @@ function ans_schema_breadcrumb_items($url, $title, $categories, $lang = '') {
 
     $position = 2;
     foreach (array_slice($categories, 0, 2) as $category) {
-        $items[] = [
+        $name = is_array($category) ? ($category['name'] ?? '') : $category;
+        $item_url = is_array($category) ? ($category['item'] ?? '') : '';
+
+        if ($item_url === '' && $name !== '') {
+            $term = get_term_by('name', $name, 'category');
+            if ($term && !is_wp_error($term)) {
+                $term_link = get_term_link($term, 'category');
+                if (!is_wp_error($term_link)) $item_url = $term_link;
+            }
+        }
+
+        if ($item_url === '' && $name !== '') {
+            $item_url = home_url('/category/' . sanitize_title($name) . '/');
+        }
+
+        $crumb = [
             '@type' => 'ListItem',
             'position' => $position++,
-            'name' => $category,
+            'name' => ans_schema_clean_text($name, 80),
         ];
+        if ($item_url !== '') $crumb['item'] = esc_url_raw($item_url);
+        $items[] = $crumb;
     }
 
     $items[] = [
