@@ -3811,6 +3811,19 @@ function ans_settings_page() {
             activeResultType = 'fail';
             $('#result_panel').hide();
             $('#result_body').empty();
+            updateStats();
+        }
+        function removeResultUrls(type, urls) {
+            if(type !== 'fail' && type !== 'skip') return;
+            var remove = {};
+            (urls || []).forEach(function(url) {
+                remove[String(url || '').trim()] = true;
+            });
+            resultDetails[type] = (resultDetails[type] || []).filter(function(item) {
+                return !remove[String(item.url || '').trim()];
+            });
+            if($('#result_panel').is(':visible') && activeResultType === type) renderResultPanel(type);
+            updateStats();
         }
         function recordResult(type, url, reason, retryable) {
             if(type !== 'fail' && type !== 'skip') return;
@@ -3881,7 +3894,8 @@ function ans_settings_page() {
             }
             return list.filter(function(item) { return item.retryable && item.url; }).map(function(item) { return item.url; });
         }
-        function retryResultUrls(urls) {
+        function retryResultUrls(urls, resultType) {
+            var retryType = resultType || activeResultType;
             urls = Array.from(new Set((urls || []).filter(Boolean)));
             if(!urls.length) { log('No retryable URLs selected.','warn'); return; }
             $.post(ajaxurl, {action:'ans_retry_urls', nonce:ANS_NONCE, urls:urls}, function(r) {
@@ -3890,6 +3904,7 @@ function ans_settings_page() {
                     if(r.data.filtered) msg += ' '+r.data.filtered+' filtered.';
                     if(!run) msg += ' Press START ENGINE to publish.';
                     log(msg);
+                    removeResultUrls(retryType, urls);
                     if(run && r.data.queued) { totalQueue += parseInt(r.data.queued, 10) || 0; updateStats(); }
                     updateQ();
                 } else {
@@ -3975,8 +3990,8 @@ function ans_settings_page() {
         function updateQ() { $.post(ajaxurl, {action:'ans_count', nonce:ANS_NONCE}, function(r){ $('#q_count').text(r.data); }); }
         function updateStats() {
             $('#stat_success').text(stats.success);
-            $('#stat_fail').text(stats.fail);
-            $('#stat_skip').text(stats.skip);
+            $('#stat_fail').text((resultDetails.fail || []).length);
+            $('#stat_skip').text((resultDetails.skip || []).length);
             if(stats.times.length > 0) {
                 var avg = (stats.times.reduce((a,b)=>a+b,0)/stats.times.length/1000).toFixed(1);
                 $('#stat_speed').text(avg + 's/post');
@@ -4004,13 +4019,16 @@ function ans_settings_page() {
             $(this).text(shouldCheck ? 'Clear Selection' : 'Select All');
         });
         $('#result_retry_all').click(function(){
-            retryResultUrls(getResultUrls(activeResultType, 'all'));
+            var type = activeResultType;
+            retryResultUrls(getResultUrls(type, 'all'), type);
         });
         $('#result_retry_selected').click(function(){
-            retryResultUrls(getResultUrls(activeResultType, 'selected'));
+            var type = activeResultType;
+            retryResultUrls(getResultUrls(type, 'selected'), type);
         });
         $('#result_body').on('click', '.retry-one', function(){
-            retryResultUrls(getResultUrls(activeResultType, 'single', $(this).data('result-idx')));
+            var type = activeResultType;
+            retryResultUrls(getResultUrls(type, 'single', $(this).data('result-idx')), type);
         });
         $('#quality_hold_btn').click(function(){ loadQualityHold(true); });
         $('#quality_hold_close').click(function(){ $('#quality_hold_panel').hide(); });
@@ -4070,7 +4088,15 @@ function ans_settings_page() {
             if(skipped>0) log('🧹 '+skipped+' media URLs filtered.','warn');
             if(urls.length===0){ log('No valid URLs found.','err'); return; }
             $.post(ajaxurl, {action:'ans_save_queue', nonce:ANS_NONCE, urls:urls}, function(r){
-                if(r.success){ log(r.data); totalQueue=urls.length; updateQ(); $('#progress_wrap').show(); }
+                if(r.success){
+                    stats={success:0,fail:0,skip:0,times:[]};
+                    resetResultDetails();
+                    log(r.data);
+                    totalQueue=urls.length;
+                    updateQ();
+                    $('#progress_wrap').show();
+                    updateStats();
+                }
                 else log('Queue save error.','err');
             });
         }
@@ -4082,7 +4108,14 @@ function ans_settings_page() {
         });
 
         // CLEAR LOGS
-        $('#clear_btn').click(function(){ $.post(ajaxurl,{action:'ans_clear', nonce:ANS_NONCE},function(){ $('#logs').html('<div class="ali">Logs cleared.</div>'); updateQ(); }); });
+        $('#clear_btn').click(function(){ $.post(ajaxurl,{action:'ans_clear', nonce:ANS_NONCE},function(){
+            stats={success:0,fail:0,skip:0,times:[]};
+            totalQueue=0;
+            resetResultDetails();
+            $('#logs').html('<div class="ali">Logs cleared.</div>');
+            updateQ();
+            updateStats();
+        }); });
 
         // ENGINE
         var run=false;
@@ -4090,7 +4123,7 @@ function ans_settings_page() {
             if(run) return;
             if($('#ans_target_lang').val()==='select'){alert('Select language!');return;}
             run=true; stats={success:0,fail:0,skip:0,times:[]};
-            resetResultDetails();
+            updateStats();
             $(this).css('opacity','0.5'); $('#stop_btn').css('opacity','1').prop('disabled',false);
             $('#progress_wrap').show();
             log('Engine Started V315.1...');
