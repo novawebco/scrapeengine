@@ -3173,6 +3173,13 @@ function ans_schema_language_attributes($output, $doctype = 'html') {
     return $output;
 }
 
+add_filter('post_class', 'ans_remove_hatom_post_class', 20, 3);
+function ans_remove_hatom_post_class($classes, $class = '', $post_id = 0) {
+    if (is_admin() || !is_singular('post')) return $classes;
+
+    return array_values(array_diff((array) $classes, ['hentry']));
+}
+
 add_action('wp_head', 'ans_output_blogposting_schema', 30);
 function ans_output_blogposting_schema() {
     if (is_admin() || !is_singular('post')) return;
