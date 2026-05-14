@@ -2781,7 +2781,11 @@ function ans_schema_language_code($lang = '') {
 }
 
 function ans_schema_clean_text($text, $max_chars = 0) {
-    $text = html_entity_decode(wp_strip_all_tags(strip_shortcodes((string) $text)), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $text = strip_shortcodes((string) $text);
+    $text = preg_replace('/<(br|hr)\s*\/?>/i', ' ', $text);
+    $text = preg_replace('/<\/(p|div|section|article|header|footer|h[1-6]|li|ul|ol|tr|td|th|blockquote)>/i', ' ', $text);
+    $text = preg_replace('/<(li|p|div|section|article|h[1-6])\b[^>]*>/i', ' ', $text);
+    $text = html_entity_decode(wp_strip_all_tags($text), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $text = preg_replace('/\s+/u', ' ', trim($text));
     if ($max_chars > 0 && function_exists('mb_substr') && mb_strlen($text, 'UTF-8') > $max_chars) {
         $text = rtrim(mb_substr($text, 0, $max_chars, 'UTF-8')) . '...';
@@ -2789,6 +2793,17 @@ function ans_schema_clean_text($text, $max_chars = 0) {
         $text = rtrim(substr($text, 0, $max_chars)) . '...';
     }
     return $text;
+}
+
+function ans_schema_site_name() {
+    $brand = ans_sanitize_option_value('ans_my_brand', get_option('ans_my_brand', ''));
+    $name = trim($brand !== '' ? $brand : (get_bloginfo('name') ?: ''));
+    return $name !== '' ? $name : 'Website';
+}
+
+function ans_schema_site_description() {
+    $description = ans_schema_clean_text(get_bloginfo('description'), 300);
+    return $description !== '' ? $description : ans_schema_site_name();
 }
 
 function ans_schema_post_language($post_id) {
@@ -2820,6 +2835,21 @@ function ans_schema_image_object($url, $width = 0, $height = 0) {
     return $image;
 }
 
+function ans_schema_logo_image() {
+    $custom_logo_id = function_exists('get_theme_mod') ? (int) get_theme_mod('custom_logo') : 0;
+    if ($custom_logo_id > 0) {
+        $src = wp_get_attachment_image_src($custom_logo_id, 'full');
+        if (!empty($src[0])) {
+            return ans_schema_image_object($src[0], $src[1] ?? 0, $src[2] ?? 0);
+        }
+    }
+
+    $site_icon = get_site_icon_url(512);
+    if ($site_icon) return ans_schema_image_object($site_icon, 512, 512);
+
+    return [];
+}
+
 function ans_schema_post_images($post) {
     $images = [];
     $post_id = is_object($post) ? (int) $post->ID : 0;
@@ -2839,6 +2869,11 @@ function ans_schema_post_images($post) {
         }
     }
 
+    if (empty($images)) {
+        $logo = ans_schema_logo_image();
+        if (!empty($logo)) $images[] = $logo;
+    }
+
     return array_values(array_filter($images));
 }
 
@@ -2846,14 +2881,12 @@ function ans_schema_publisher() {
     $publisher = [
         '@type' => 'Organization',
         '@id' => home_url('/#organization'),
-        'name' => get_bloginfo('name') ?: 'Website',
+        'name' => ans_schema_site_name(),
         'url' => home_url('/'),
     ];
 
-    $logo = get_site_icon_url(512);
-    if ($logo) {
-        $publisher['logo'] = ans_schema_image_object($logo, 512, 512);
-    }
+    $logo = ans_schema_logo_image();
+    if (!empty($logo)) $publisher['logo'] = $logo;
 
     return $publisher;
 }
@@ -2886,7 +2919,7 @@ function ans_schema_author_archive_url($author_id, $name = '') {
 function ans_schema_author($post) {
     $author_id = (int) $post->post_author;
     $name = get_the_author_meta('display_name', $author_id);
-    if (!$name) $name = get_bloginfo('name') ?: 'Author';
+    if (!$name) $name = ans_schema_site_name();
     $author_url = ans_schema_author_archive_url($author_id, $name);
 
     $author = [
@@ -2912,8 +2945,8 @@ function ans_schema_blog_ref() {
 }
 
 function ans_schema_blog_node($lang, $blogposting_id = '') {
-    $name = get_bloginfo('name') ?: 'Website';
-    $description = ans_schema_clean_text(get_bloginfo('description'), 300);
+    $name = ans_schema_site_name();
+    $description = ans_schema_site_description();
 
     $blog = [
         '@type' => 'Blog',
@@ -2960,10 +2993,11 @@ function ans_build_blogposting_schema($post) {
     $page_id = trailingslashit($url) . '#webpage';
     $blogposting_id = trailingslashit($url) . '#blogposting';
     $lang = ans_schema_post_language($post_id);
+    $site_name = ans_schema_site_name();
     $title = ans_schema_clean_text(get_the_title($post_id), 180);
     $description = has_excerpt($post_id)
         ? ans_schema_clean_text(get_the_excerpt($post_id), 300)
-        : ans_schema_clean_text(wp_trim_words(wp_strip_all_tags($post->post_content), 38, ''), 300);
+        : ans_schema_clean_text(wp_trim_words(ans_schema_clean_text($post->post_content), 38, ''), 300);
     if ($description === '') $description = $title;
     $article_body = ans_schema_clean_text($post->post_content, 12000);
 
@@ -3020,7 +3054,7 @@ function ans_build_blogposting_schema($post) {
                 '@type' => 'WebSite',
                 '@id' => home_url('/#website'),
                 'url' => home_url('/'),
-                'name' => get_bloginfo('name') ?: 'Website',
+                'name' => $site_name,
                 'inLanguage' => $lang,
                 'publisher' => ans_schema_organization_ref(),
                 'hasPart' => ans_schema_blog_ref(),
@@ -3048,19 +3082,34 @@ function ans_build_blogposting_schema($post) {
         $schema['@graph'][] = [
             '@type' => 'BreadcrumbList',
             '@id' => trailingslashit($url) . '#breadcrumb',
-            'itemListElement' => ans_schema_breadcrumb_items($url, $title, $categories),
+            'itemListElement' => ans_schema_breadcrumb_items($url, $title, $categories, $lang),
         ];
     }
 
     return ans_schema_remove_empty($schema);
 }
 
-function ans_schema_breadcrumb_items($url, $title, $categories) {
+function ans_schema_home_label($lang) {
+    $labels = [
+        'de' => 'Startseite',
+        'pt' => 'Início',
+        'it' => 'Home',
+        'es' => 'Inicio',
+        'fr' => 'Accueil',
+        'hi' => 'होम',
+        'ru' => 'Главная',
+        'en' => 'Home',
+    ];
+    $lang = ans_schema_language_code($lang);
+    return $labels[$lang] ?? 'Home';
+}
+
+function ans_schema_breadcrumb_items($url, $title, $categories, $lang = '') {
     $items = [
         [
             '@type' => 'ListItem',
             'position' => 1,
-            'name' => get_bloginfo('name') ?: 'Home',
+            'name' => ans_schema_home_label($lang),
             'item' => home_url('/'),
         ],
     ];
@@ -3105,14 +3154,9 @@ function ans_output_blogposting_schema() {
     $schema = ans_build_blogposting_schema($post);
     if (empty($schema)) return;
 
-    $nodes = (!empty($schema['@graph']) && is_array($schema['@graph'])) ? $schema['@graph'] : [$schema];
-    foreach ($nodes as $node) {
-        if (empty($node['@type'])) continue;
-        $node = array_merge(['@context' => 'https://schema.org'], $node);
-        echo "\n<script type=\"application/ld+json\">\n";
-        echo wp_json_encode($node, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        echo "\n</script>\n";
-    }
+    echo "\n<script type=\"application/ld+json\">\n";
+    echo wp_json_encode($schema, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    echo "\n</script>\n";
 }
 
 // ============================================================
