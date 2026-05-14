@@ -3147,6 +3147,32 @@ function ans_schema_remove_empty($value) {
     return array_values($clean) === $clean ? array_values($clean) : $clean;
 }
 
+add_filter('generate_schema_type', 'ans_disable_theme_schema_on_posts', 20);
+function ans_disable_theme_schema_on_posts($schema = '') {
+    if (is_singular('post')) return false;
+    return $schema;
+}
+
+add_filter('language_attributes', 'ans_schema_language_attributes', 20, 2);
+function ans_schema_language_attributes($output, $doctype = 'html') {
+    if (is_admin() || !is_singular('post')) return $output;
+
+    $post_id = get_queried_object_id();
+    if (!$post_id) return $output;
+
+    $lang = ans_schema_post_language($post_id);
+    if ($lang === '') return $output;
+
+    $lang_attr = 'lang="' . esc_attr($lang) . '"';
+    if (preg_match('/\blang=["\'][^"\']*["\']/', $output)) {
+        $output = preg_replace('/\blang=["\'][^"\']*["\']/', $lang_attr, $output, 1);
+    } else {
+        $output = trim($output . ' ' . $lang_attr);
+    }
+
+    return $output;
+}
+
 add_action('wp_head', 'ans_output_blogposting_schema', 30);
 function ans_output_blogposting_schema() {
     if (is_admin() || !is_singular('post')) return;
