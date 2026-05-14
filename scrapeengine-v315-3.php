@@ -2837,6 +2837,7 @@ function ans_schema_image_object($url, $width = 0, $height = 0) {
 
 function ans_schema_logo_image() {
     $custom_logo_id = function_exists('get_theme_mod') ? (int) get_theme_mod('custom_logo') : 0;
+    if ($custom_logo_id <= 0) $custom_logo_id = (int) get_option('site_logo', 0);
     if ($custom_logo_id > 0) {
         $src = wp_get_attachment_image_src($custom_logo_id, 'full');
         if (!empty($src[0])) {
